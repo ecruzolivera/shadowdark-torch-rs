@@ -8,13 +8,17 @@ use embedded_hal::pwm::SetDutyCycle;
 use panic_halt as _;
 use ufmt::uwriteln;
 
-static DUTY_CYCLE: AtomicU8 = AtomicU8::new(90);
+mod pseudo_rand;
+
+const HOUR: u16 = 3600;
+const HALF_HOUR: u16 = HOUR / 2;
 const TIMER1_PRELOAD: u16 = 49911; // Preload for 1s overflow with prescaler 1024
+static SECONDS: AtomicU8 = AtomicU8::new(0);
 
 #[avr_device::interrupt(atmega2560)]
 fn TIMER1_OVF() {
-    let current = DUTY_CYCLE.load(Ordering::SeqCst);
-    DUTY_CYCLE.store(current / 2, Ordering::SeqCst);
+    let secs = SECONDS.load(Ordering::SeqCst);
+    SECONDS.store(secs + 1, Ordering::SeqCst);
     unsafe {
         // SAFETY: Accessing hardware register from ISR
         (*avr_device::atmega2560::TC1::ptr())
@@ -56,12 +60,39 @@ fn main() -> ! {
     unsafe {
         avr_device::interrupt::enable();
     }
-
+    let mut rng = pseudo_rand::XorShift8::new(69);
     loop {
-        let duty = DUTY_CYCLE.load(Ordering::Relaxed);
-        led.set_duty_cycle_percent(duty).unwrap();
-        uwriteln!(&mut serial, "Duty: {}%\r", duty).unwrap();
-        // Actually sleep until next interrupt (Timer1 OVF)
+        let seconds = SECONDS.load(Ordering::SeqCst);
+        let delta = rng.random_between(-5, 5);
+        let duty_cycle = flick_torch(seconds, delta);
+        led.set_duty_cycle_percent(duty_cycle).unwrap();
+        uwriteln!(
+            &mut serial,
+            "Duty: {}% Seconds: {} delta: {}\r",
+            duty_cycle,
+            seconds,
+            delta
+        )
+        .unwrap();
         avr_device::asm::sleep();
+        if seconds > 60 {
+            avr_device::interrupt::disable();
+            led.set_duty_cycle_percent(0).unwrap();
+            avr_device::asm::sleep();
+        }
+    }
+}
+
+fn flick_torch(seconds: u8, delta: i8) -> u8 {
+    let adjusted_by_time: u8 = match seconds {
+        0..=30 => 90,
+        31..=45 => 60,
+        46..=59 => 40,
+        _ => 0,
+    };
+    let flicked = adjusted_by_time.saturating_add_signed(delta);
+    match flicked {
+        v if v > 100 => 100,
+        _ => flicked,
     }
 }
