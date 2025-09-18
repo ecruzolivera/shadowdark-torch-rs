@@ -15,12 +15,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - name: Install AVR toolchain
         run: sudo apt-get update && sudo apt-get install -y gcc-avr binutils-avr avr-libc pkg-config avrdude libudev-dev build-essential
-      - name: Add AVR target
+
+      - name: Build
         run: cargo build --release --verbose --target avr-none
+
+      - name: Set artifact date
+        id: date
+        run: echo "DATE=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+
       - name: Upload AVR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: shadowdark-torch-rs-binary
+          name: shadowdark-torch-rs-${{ env.DATE }}
           path: target/avr-none/release/shadowdark-torch-rs.elf
