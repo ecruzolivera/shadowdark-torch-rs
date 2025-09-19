@@ -72,11 +72,13 @@ fn main() -> ! {
     let mut rng = pseudo_rand::XorShift8::new(seed as i8);
     let mut miliseconds = 0;
     loop {
-        let is_over_t = miliseconds / 1000 >= T59;
+        let seconds = miliseconds / 1000;
+
+        let is_over_t = seconds >= T59;
         let delta = rng.random_between(-50, 50);
         let off = is_over_t && delta < 0;
 
-        let duty_cycle = flick_torch(miliseconds / 1000, delta);
+        let duty_cycle = flick_torch(seconds, delta);
 
         led.set_duty_cycle_percent(duty_cycle).unwrap();
 
@@ -84,7 +86,7 @@ fn main() -> ! {
             &mut serial,
             "Duty: {}% Seconds: {} delta: {}\r",
             duty_cycle,
-            miliseconds / 1000,
+            seconds,
             delta
         )
         .unwrap();
