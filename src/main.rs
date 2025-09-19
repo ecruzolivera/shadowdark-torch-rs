@@ -2,7 +2,10 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer0Pwm};
+use arduino_hal::{
+    adc,
+    simple_pwm::{IntoPwmPin, Prescaler, Timer0Pwm},
+};
 use core::sync::atomic::{AtomicU16, Ordering};
 use embedded_hal::pwm::SetDutyCycle;
 use panic_halt as _;
@@ -10,10 +13,11 @@ use ufmt::uwriteln;
 
 mod pseudo_rand;
 
-const MINUTE: u16 = 60;
+const MINUTE: u16 = 1;
 const T30: u16 = MINUTE * 30;
 const T45: u16 = MINUTE * 45;
 const T50: u16 = MINUTE * 50;
+const T59: u16 = MINUTE * 59;
 
 const TIMER1_PRELOAD: u16 = 49911; // Preload for 1s overflow with prescaler 1024
 
@@ -47,6 +51,11 @@ fn main() -> ! {
     // Setup serial port at 57600 baud
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
     let mut led = pins.d13.into_output().into_pwm(&timer0);
+    let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
+    let a0 = pins.a0.into_analog_input(&mut adc).into_channel();
+    let seed = adc.read_blocking(&a0);
+
+    uwriteln!(&mut serial, "Hello from Torch, seed value: {}\r", seed).unwrap();
 
     led.enable();
     // Preload TCNT1
@@ -60,16 +69,18 @@ fn main() -> ! {
     unsafe {
         avr_device::interrupt::enable();
     }
-    let mut rng = pseudo_rand::XorShift8::new(69);
-    let mut off = false;
+
+    let mut rng = pseudo_rand::XorShift8::new(seed as i8);
     let mut seconds = 0;
     loop {
-        let is_over_fifty = seconds >= T50;
+        let is_over_t = seconds >= T59;
+        let delta = rng.random_between(-10, 10);
+        let off = is_over_t && delta < 0;
 
-        let delta = rng.random_between(-5, 5);
-        off = is_over_fifty && delta < 0;
         let duty_cycle = flick_torch(seconds, delta);
+
         led.set_duty_cycle_percent(duty_cycle).unwrap();
+
         uwriteln!(
             &mut serial,
             "Duty: {}% Seconds: {} delta: {}\r",
@@ -79,23 +90,38 @@ fn main() -> ! {
         )
         .unwrap();
 
+        avr_device::asm::sleep();
+        seconds += 1;
+
         if off {
             avr_device::interrupt::disable();
             led.set_duty_cycle_percent(0).unwrap();
             avr_device::asm::sleep();
         }
-        avr_device::asm::sleep();
-        seconds += 1;
     }
 }
 
 fn flick_torch(seconds: u16, delta: i8) -> u8 {
     const T31: u16 = T30 + 1;
+    const T46: u16 = T45 + 1;
 
-    let adjusted_by_time: u8 = match seconds {
-        0..=T30 => 90,
-        T31..=T45 => 50,
-        _ => 30,
+    // set the baseline
+    let duty_cycle: u8 = match seconds {
+        0..=T30 => 95,
+        T31..=T45 => 70,
+        T46..=T50 => 40,
+        _ => 20,
     };
-    adjusted_by_time.saturating_add_signed(delta)
+
+    // adding the flickering effect
+    let duty_cycle = duty_cycle.saturating_add_signed(delta);
+
+    if duty_cycle > 100 {
+        100
+    } else if duty_cycle <= 10 && seconds < T59 {
+        // never allow being off until min 59
+        10
+    } else {
+        duty_cycle
+    }
 }
