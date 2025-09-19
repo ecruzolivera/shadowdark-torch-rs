@@ -74,7 +74,7 @@ fn main() -> ! {
     let mut seconds = 0;
     loop {
         let is_over_t = seconds >= T59;
-        let delta = rng.random_between(-10, 10);
+        let delta = rng.random_between(-50, 50);
         let off = is_over_t && delta < 0;
 
         let duty_cycle = flick_torch(seconds, delta);
