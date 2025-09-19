@@ -70,9 +70,9 @@ fn main() -> ! {
     }
 
     let mut rng = pseudo_rand::XorShift8::new(seed as i8);
-    let mut miliseconds = 0;
+    let mut miliseconds: u32 = 0;
     loop {
-        let seconds = miliseconds / 1000;
+        let seconds = (miliseconds / 1000) as u16;
 
         let is_over_t = seconds >= T59;
         let delta = rng.random_between(-50, 50);
@@ -92,7 +92,7 @@ fn main() -> ! {
         .unwrap();
 
         avr_device::asm::sleep();
-        miliseconds += TIME_INC;
+        miliseconds += TIME_INC as u32;
 
         if off {
             uwriteln!(&mut serial, "Power off").unwrap();
@@ -118,13 +118,13 @@ fn flick_torch(seconds: u16, delta: i8) -> u8 {
     // adding the flickering effect
     let duty_cycle = duty_cycle.saturating_add_signed(delta);
 
-    if duty_cycle > 100 {
-        100
+    if duty_cycle > 99 {
+        99
     } else if duty_cycle > 20 && seconds > T50 {
         20
-    } else if duty_cycle <= 10 && seconds < T59 {
-        // never allow being off until min 59
-        10
+    } else if duty_cycle < 5 {
+        // never allow being off due flickering
+        5
     } else {
         duty_cycle
     }
