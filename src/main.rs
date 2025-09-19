@@ -2,24 +2,23 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-use arduino_hal::{
-    adc,
-    simple_pwm::{IntoPwmPin, Prescaler, Timer0Pwm},
-};
-use core::sync::atomic::{AtomicU16, Ordering};
+use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer0Pwm};
 use embedded_hal::pwm::SetDutyCycle;
 use panic_halt as _;
 use ufmt::uwriteln;
 
 mod pseudo_rand;
 
-const MINUTE: u16 = 1;
+const MINUTE: u16 = 60;
 const T30: u16 = MINUTE * 30;
 const T45: u16 = MINUTE * 45;
 const T50: u16 = MINUTE * 50;
 const T59: u16 = MINUTE * 59;
 
-const TIMER1_PRELOAD: u16 = 49911; // Preload for 1s overflow with prescaler 1024
+// const TIMER1_PRELOAD: u16 = 49911; // Preload for 1s overflow with prescaler 64
+// const TIMER1_PRELOAD: u16 = 57724; // Preload for 500ms overflow with prescaler 1024
+const TIMER1_PRELOAD: u16 = 63973; // Preload for 100ms overflow with prescaler 1024
+const TIME_INC: u16 = 100;
 
 #[avr_device::interrupt(atmega2560)]
 fn TIMER1_OVF() {
@@ -46,7 +45,7 @@ fn main() -> ! {
                 .set_bit()
         }, // set SE = sleep enable
     );
-    let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale64);
+    let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale1024);
 
     // Setup serial port at 57600 baud
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
@@ -71,13 +70,13 @@ fn main() -> ! {
     }
 
     let mut rng = pseudo_rand::XorShift8::new(seed as i8);
-    let mut seconds = 0;
+    let mut miliseconds = 0;
     loop {
-        let is_over_t = seconds >= T59;
+        let is_over_t = miliseconds / 1000 >= T59;
         let delta = rng.random_between(-50, 50);
         let off = is_over_t && delta < 0;
 
-        let duty_cycle = flick_torch(seconds, delta);
+        let duty_cycle = flick_torch(miliseconds / 1000, delta);
 
         led.set_duty_cycle_percent(duty_cycle).unwrap();
 
@@ -85,17 +84,18 @@ fn main() -> ! {
             &mut serial,
             "Duty: {}% Seconds: {} delta: {}\r",
             duty_cycle,
-            seconds,
+            miliseconds / 1000,
             delta
         )
         .unwrap();
 
         avr_device::asm::sleep();
-        seconds += 1;
+        miliseconds += TIME_INC;
 
         if off {
+            uwriteln!(&mut serial, "Power off").unwrap();
             avr_device::interrupt::disable();
-            led.set_duty_cycle_percent(0).unwrap();
+            led.disable();
             avr_device::asm::sleep();
         }
     }
@@ -118,6 +118,8 @@ fn flick_torch(seconds: u16, delta: i8) -> u8 {
 
     if duty_cycle > 100 {
         100
+    } else if duty_cycle > 20 && seconds > T50 {
+        20
     } else if duty_cycle <= 10 && seconds < T59 {
         // never allow being off until min 59
         10
