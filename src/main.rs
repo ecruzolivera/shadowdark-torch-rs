@@ -13,7 +13,7 @@ const MINUTE: u16 = 60;
 const T30: u16 = MINUTE * 30;
 const T45: u16 = MINUTE * 45;
 const T50: u16 = MINUTE * 50;
-const T59: u16 = MINUTE * 59;
+// const T59: u16 = MINUTE * 59;
 
 // const TIMER1_PRELOAD: u16 = 49911; // Preload for 1s overflow with prescaler 64
 // const TIMER1_PRELOAD: u16 = 57724; // Preload for 500ms overflow with prescaler 1024
@@ -70,29 +70,51 @@ fn main() -> ! {
     }
 
     let mut rng = pseudo_rand::XorShift8::new(seed as i8);
-    let mut miliseconds: u32 = 0;
+    let mut miliseconds: u32 = 3000000;
+    let mut chance_for_turning_off = 0; //%
+    let mut last_min = 0;
+    let mut last_sec = 0;
     loop {
         let seconds = (miliseconds / 1000) as u16;
+        let minutes = seconds / 60;
 
-        let is_over_t = seconds >= T59;
-        let delta = rng.random_between(-50, 50);
-        let off = is_over_t && delta < 0;
+        let is_over_t = seconds >= T50;
+        let delta = rng.random_between(-40, 40);
+        let off = if is_over_t && minutes != last_min {
+            let maybe_off = rng.random_between(1, 100);
+            chance_for_turning_off += 1;
+            uwriteln!(
+                &mut serial,
+                "Maybe off: {}% , chance_for_turning_off: {}% \r",
+                maybe_off,
+                chance_for_turning_off
+            )
+            .unwrap();
+            maybe_off < chance_for_turning_off
+        } else {
+            false
+        };
 
         let duty_cycle = flick_torch(seconds, delta);
 
         led.set_duty_cycle_percent(duty_cycle).unwrap();
 
-        uwriteln!(
-            &mut serial,
-            "Duty: {}% Seconds: {} delta: {}\r",
-            duty_cycle,
-            seconds,
-            delta
-        )
-        .unwrap();
-
+        if last_sec != seconds {
+            uwriteln!(
+                &mut serial,
+                "Duty: {}%, Minutes: {}, Seconds: {}, delta: {}\r",
+                duty_cycle,
+                minutes,
+                seconds,
+                delta
+            )
+            .unwrap();
+        }
         avr_device::asm::sleep();
         miliseconds += TIME_INC as u32;
+
+        last_min = minutes;
+        last_sec = seconds;
 
         if off {
             uwriteln!(&mut serial, "Power off").unwrap();
