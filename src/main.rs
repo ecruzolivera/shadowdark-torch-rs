@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(abi_avr_interrupt)]
+#![feature(asm_experimental_arch)]
 
 use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer0Pwm};
 use embedded_hal::pwm::SetDutyCycle;
@@ -12,8 +13,8 @@ mod pseudo_rand;
 const MINUTE: u16 = 60;
 const T30: u16 = MINUTE * 30;
 const T45: u16 = MINUTE * 45;
+const T47: u16 = MINUTE * 47;
 const T50: u16 = MINUTE * 50;
-// const T59: u16 = MINUTE * 59;
 
 // const TIMER1_PRELOAD: u16 = 49911; // Preload for 1s overflow with prescaler 64
 // const TIMER1_PRELOAD: u16 = 57724; // Preload for 500ms overflow with prescaler 1024
@@ -54,7 +55,7 @@ fn main() -> ! {
     let a0 = pins.a0.into_analog_input(&mut adc).into_channel();
     let seed = adc.read_blocking(&a0);
 
-    uwriteln!(&mut serial, "Hello from Torch, seed value: {}\r", seed).unwrap();
+    uwriteln!(&mut serial, "Torch ON, seed value: {}\r", seed).unwrap();
 
     led.enable();
     // Preload TCNT1
@@ -70,26 +71,18 @@ fn main() -> ! {
     }
 
     let mut rng = pseudo_rand::XorShift8::new(seed as i8);
-    let mut miliseconds: u32 = 3000000;
+    let mut miliseconds: u32 = 0;
     let mut chance_for_turning_off = 0; //%
     let mut last_min = 0;
-    let mut last_sec = 0;
     loop {
         let seconds = (miliseconds / 1000) as u16;
         let minutes = seconds / 60;
 
-        let is_over_t = seconds >= T50;
+        let is_over_t = seconds >= T47;
         let delta = rng.random_between(-40, 40);
         let off = if is_over_t && minutes != last_min {
             let maybe_off = rng.random_between(1, 100);
             chance_for_turning_off += 1;
-            uwriteln!(
-                &mut serial,
-                "Maybe off: {}% , chance_for_turning_off: {}% \r",
-                maybe_off,
-                chance_for_turning_off
-            )
-            .unwrap();
             maybe_off < chance_for_turning_off
         } else {
             false
@@ -99,25 +92,13 @@ fn main() -> ! {
 
         led.set_duty_cycle_percent(duty_cycle).unwrap();
 
-        if last_sec != seconds {
-            uwriteln!(
-                &mut serial,
-                "Duty: {}%, Minutes: {}, Seconds: {}, delta: {}\r",
-                duty_cycle,
-                minutes,
-                seconds,
-                delta
-            )
-            .unwrap();
-        }
         avr_device::asm::sleep();
         miliseconds += TIME_INC as u32;
 
         last_min = minutes;
-        last_sec = seconds;
 
         if off {
-            uwriteln!(&mut serial, "Power off").unwrap();
+            uwriteln!(&mut serial, "Torch OFF, {}m", minutes).unwrap();
             avr_device::interrupt::disable();
             led.disable();
             avr_device::asm::sleep();
@@ -149,5 +130,11 @@ fn flick_torch(seconds: u16, delta: i8) -> u8 {
         5
     } else {
         duty_cycle
+    }
+}
+
+fn jump_to_reset_vector() -> ! {
+    unsafe {
+        core::arch::asm!("jmp 0x0000", options(noreturn));
     }
 }
