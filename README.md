@@ -1,4 +1,4 @@
-# shadowdark-torch-rs
+# Shadowdark torch rs
 
 Rust project for the _attiny85_.
 
