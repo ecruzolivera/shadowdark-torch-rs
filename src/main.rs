@@ -3,12 +3,13 @@
 #![feature(abi_avr_interrupt)]
 #![feature(asm_experimental_arch)]
 
-use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer0Pwm};
+mod pseudo_rand;
 use embedded_hal::pwm::SetDutyCycle;
 use panic_halt as _;
-use ufmt::uwriteln;
 
-mod pseudo_rand;
+use attiny_hal as hal;
+use hal::clock::MHz1;
+use hal::simple_pwm::*;
 
 const MINUTE: u16 = 60;
 const T30: u16 = MINUTE * 30;
@@ -16,54 +17,38 @@ const T45: u16 = MINUTE * 45;
 const T47: u16 = MINUTE * 47;
 const T50: u16 = MINUTE * 50;
 
-// const TIMER1_PRELOAD: u16 = 49911; // Preload for 1s overflow with prescaler 64
-// const TIMER1_PRELOAD: u16 = 57724; // Preload for 500ms overflow with prescaler 1024
-const TIMER1_PRELOAD: u16 = 63973; // Preload for 100ms overflow with prescaler 1024
+const TIMER1_PRELOAD: u8 = 158; // Preload for 100ms overflow with prescaler 1024 and 1 MHz clock
 const TIME_INC: u16 = 100;
 
-#[avr_device::interrupt(atmega2560)]
+#[avr_device::interrupt(attiny85)]
 fn TIMER1_OVF() {
     unsafe {
-        // SAFETY: Accessing hardware register from ISR
-        (*avr_device::atmega2560::TC1::ptr())
-            .tcnt1
+        (*avr_device::attiny85::TC1::ptr())
+            .tcnt1()
             .write(|w| w.bits(TIMER1_PRELOAD));
     }
 }
 
-#[arduino_hal::entry]
+#[attiny_hal::entry]
 fn main() -> ! {
-    let dp = arduino_hal::Peripherals::take().unwrap();
-    let pins = arduino_hal::pins!(dp);
-    // **DISABLE Timer0 overflow interrupt!**
-    dp.TC0.timsk0.write(|w| w.toie0().clear_bit());
-    // Configure CPU sleep mode: IDLE + enable sleep
-    dp.CPU.smcr.write(
-        |w| {
-            w.sm()
-                .idle() // choose IDLE mode
-                .se()
-                .set_bit()
-        }, // set SE = sleep enable
-    );
-    let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale1024);
+    let dp = hal::Peripherals::take().unwrap();
+    let pins = hal::pins!(dp);
 
-    // Setup serial port at 57600 baud
-    let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
-    let mut led = pins.d13.into_output().into_pwm(&timer0);
-    let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
-    let a0 = pins.a0.into_analog_input(&mut adc).into_channel();
-    let seed = adc.read_blocking(&a0);
+    let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale64);
 
-    uwriteln!(&mut serial, "Torch ON, seed value: {}\r", seed).unwrap();
+    let mut pwm_led = pins.pb0.into_output().into_pwm(&timer0);
+    pwm_led.enable();
 
-    led.enable();
-    // Preload TCNT1
-    dp.TC1.tcnt1.write(|w| w.bits(TIMER1_PRELOAD));
     // Configure Timer1 in normal mode with prescaler 1024
-    dp.TC1.tccr1b.write(|w| w.cs1().prescale_1024());
+    dp.TC1.tccr1().write(|w| w.cs1().prescale_1024());
+    // Preload TCNT1
+    dp.TC1.tcnt1().write(|w| unsafe { w.bits(TIMER1_PRELOAD) });
     // Enable Timer1 overflow interrupt
-    dp.TC1.timsk1.write(|w| w.toie1().set_bit());
+    dp.TC1.timsk().write(|w| w.toie1().set_bit());
+
+    let mut adc = attiny_hal::adc::Adc::<MHz1>::new(dp.ADC, Default::default());
+    let pb2_adc1 = pins.pb2.into_analog_input(&mut adc).into_channel();
+    let seed = adc.read_blocking(&pb2_adc1);
 
     // Enable interrupts globally
     unsafe {
@@ -90,7 +75,7 @@ fn main() -> ! {
 
         let duty_cycle = flick_torch(seconds, delta);
 
-        led.set_duty_cycle_percent(duty_cycle).unwrap();
+        pwm_led.set_duty_cycle_percent(duty_cycle).unwrap();
 
         avr_device::asm::sleep();
         miliseconds += TIME_INC as u32;
@@ -98,9 +83,8 @@ fn main() -> ! {
         last_min = minutes;
 
         if off {
-            uwriteln!(&mut serial, "Torch OFF, {}m", minutes).unwrap();
             avr_device::interrupt::disable();
-            led.disable();
+            pwm_led.disable();
             avr_device::asm::sleep();
         }
     }
@@ -133,8 +117,17 @@ fn flick_torch(seconds: u16, delta: i8) -> u8 {
     }
 }
 
-fn jump_to_reset_vector() -> ! {
-    unsafe {
-        core::arch::asm!("jmp 0x0000", options(noreturn));
-    }
-}
+//
+// fn jump_to_reset_vector() -> ! {
+//     unsafe {
+//         core::arch::asm!("jmp 0x0000", options(noreturn));
+//     }
+// }
+//
+//
+//
+//     // **DISABLE Timer0 overflow interrupt!**
+//     dp.TC0.timsk().write(|w| w.toie0().clear_bit());
+//     // Configure CPU sleep mode: IDLE + enable sleep
+//     // dp.CPU.mcucr.modify(|_, w| w.se().set_bit());
+//     //
