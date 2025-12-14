@@ -39,7 +39,7 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
       - name: Cache cargo registry
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -62,21 +62,21 @@ jobs:
         run: just size
 
       - name: Upload hex file as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: ${{ env. RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs.sha8 }}
+          name: ${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs.sha8 }}
           path: dist/${{ env.BINARY_NAME }}.hex
 
       # Only create release on master push (not PRs)
       - name: Create Release
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
         id: create_release
-        uses: actions/create-release@v1
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets. GITHUB_TOKEN }}
         with:
           tag_name: ${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs.sha8 }}
-          release_name: ${{ env. RELEASE_NAME }}-v${{ github.run_number }}
+          name: ${{ env.RELEASE_NAME }}-v${{ github. run_number }}
           body: |
             🔥 **ATtiny85 Shadowdark Torch Simulator Firmware**
 
@@ -88,7 +88,7 @@ jobs:
             **Flash Instructions:**
             ```bash
             # Download the hex file and flash to ATtiny85
-            avrdude -p attiny85 -c usbtiny -U flash:w:${{ env. RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs. sha8 }}.hex:i
+            avrdude -p attiny85 -c usbtiny -U flash: w:${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs.sha8 }}.hex:i
 
             # Or with USBasp programmer
             avrdude -p attiny85 -c usbasp -U flash:w:${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs.sha8 }}. hex:i
@@ -98,23 +98,14 @@ jobs:
             Check the build logs for detailed memory usage information.
 
             **Hardware Setup:**
-            - MCU: ATtiny85
+            - MCU:  ATtiny85
             - Clock: 1MHz (internal oscillator)
-            - PWM Output: PB1 (Pin 6) - Connect LED/torch circuit
+            - PWM Output:  PB1 (Pin 6) - Connect LED/torch circuit
             - ADC Input: PB5 (Pin 1) - Random seed (can be left floating)
+          files: |
+            dist/${{ env.BINARY_NAME }}.hex
           draft: false
           prerelease: false
-
-      - name: Upload Release Asset
-        if: github.ref == 'refs/heads/master' && github. event_name == 'push'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps. create_release.outputs.upload_url }}
-          asset_path: dist/${{ env.BINARY_NAME }}.hex
-          asset_name: ${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs.sha8 }}.hex
-          asset_content_type: application/octet-stream
 
   # Optional: Build check for PRs
   check:
