@@ -21,10 +21,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly
-          targets: avr-unknown-gnu-atmega328
-          components: rust-src
 
       - name: Install AVR toolchain
         run: |
@@ -118,10 +114,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly
-          targets: avr-unknown-gnu-atmega328
-          components: rust-src
 
       - name: Install AVR toolchain
         run: |
