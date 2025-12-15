@@ -12,9 +12,9 @@ env:
   RELEASE_NAME: attiny85-shadowdark-torch
 
 jobs:
-  build:
+  check:
+    name: Code Quality
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,116 +22,123 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install AVR toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y avr-libc gcc-avr
-
-      - name: Install cargo-binutils
-        run: cargo install cargo-binutils
-
-      - name: Install just
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
-
-      - name: Cache cargo registry
+      - name: Cache cargo dependencies
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build firmware
-        run: |
-          just release
-
-      - name: Get short SHA
-        id: slug
-        run: echo "sha8=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_OUTPUT
-
-      - name: Set build date
-        run: echo "BUILD_DATE=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
-
-      - name: Show memory usage
-        run: just size
-
-      - name: Upload hex file as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs.sha8 }}
-          path: dist/${{ env.BINARY_NAME }}.hex
-
-      # Only create release on master push (not PRs)
-      - name: Create Release
-        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
-        id: create_release
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets. GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs.sha8 }}
-          name: ${{ env.RELEASE_NAME }}-v${{ github. run_number }}
-          body: |
-            🔥 **ATtiny85 Shadowdark Torch Simulator Firmware**
-
-            **Build Info:**
-            - Commit: ${{ github.sha }}
-            - Build:  #${{ github.run_number }}
-            - Date: ${{ env.BUILD_DATE }}
-
-            **Flash Instructions:**
-            ```bash
-            # Download the hex file and flash to ATtiny85
-            avrdude -p attiny85 -c usbtiny -U flash: w:${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs.sha8 }}.hex:i
-
-            # Or with USBasp programmer
-            avrdude -p attiny85 -c usbasp -U flash:w:${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.slug.outputs.sha8 }}. hex:i
-            ```
-
-            **Memory Usage:**
-            Check the build logs for detailed memory usage information.
-
-            **Hardware Setup:**
-            - MCU:  ATtiny85
-            - Clock: 1MHz (internal oscillator)
-            - PWM Output:  PB1 (Pin 6) - Connect LED/torch circuit
-            - ADC Input: PB5 (Pin 1) - Random seed (can be left floating)
-          files: |
-            dist/${{ env.BINARY_NAME }}.hex
-          draft: false
-          prerelease: false
-
-  # Optional: Build check for PRs
-  check:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install AVR toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y avr-libc gcc-avr
-
-      - name: Install cargo-binutils
-        run: cargo install cargo-binutils
-
-      - name: Install just
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Check code formatting
         run: cargo fmt --check
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
-      - name: Build check
-        run: just check
+      - name: Check compilation
+        run: cargo check
+
+  build:
+    name: Build Firmware
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y avr-libc gcc-avr
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache cargo tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/
+          key: ${{ runner.os }}-cargo-tools-${{ hashFiles('justfile') }}
+
+      - name: Install tools
+        run: |
+          # Install cargo-binutils if not cached
+          if ! command -v cargo-objcopy &> /dev/null; then
+            cargo install cargo-binutils
+          fi
+          
+          # Install just if not cached
+          if ! command -v just &> /dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to ~/.cargo/bin
+          fi
+
+      - name: Build firmware
+        run: |
+          ~/.cargo/bin/just release
+
+      - name: Show memory usage
+        run: ~/.cargo/bin/just size
+
+      - name: Get build metadata
+        id: meta
+        run: |
+          echo "sha8=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_OUTPUT
+          echo "build_date=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+
+      - name: Upload hex file as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.meta.outputs.sha8 }}
+          path: dist/${{ env.BINARY_NAME }}.hex
+          retention-days: 30
+
+      - name: Create Release
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_NAME }}-v${{ github.run_number }}-${{ steps.meta.outputs.sha8 }}
+          name: ${{ env.RELEASE_NAME }} v${{ github.run_number }}
+          body: |
+            🔥 **ATtiny85 Shadowdark Torch Simulator Firmware**
+
+            **Build Info:**
+            - Commit: `${{ github.sha }}`
+            - Build: #${{ github.run_number }}
+            - Date: ${{ steps.meta.outputs.build_date }}
+
+            **Flash Instructions:**
+            ```bash
+            # Download the hex file and flash to ATtiny85
+            avrdude -p attiny85 -c usbtiny -U flash:w:${{ env.BINARY_NAME }}.hex:i
+
+            # Or with USBasp programmer
+            avrdude -p attiny85 -c usbasp -U flash:w:${{ env.BINARY_NAME }}.hex:i
+            ```
+
+            **Hardware Setup:**
+            - MCU: ATtiny85
+            - Clock: 1MHz (internal oscillator)
+            - PWM Output: PB1 (Pin 6) - Connect LED/torch circuit
+            - ADC Input: PB5 (Pin 1) - Random seed (can be left floating)
+          files: |
+            dist/${{ env.BINARY_NAME }}.hex
+          draft: false
+          prerelease: false
