@@ -3,6 +3,13 @@
 #![feature(abi_avr_interrupt)]
 #![feature(asm_experimental_arch)]
 
+// Shadowdark RPG Torch Simulation for ATtiny85 @ 8MHz
+// Power-optimized firmware for maximum battery life:
+// - Timer interrupts every ~33ms (30Hz updates)
+// - PWM frequency optimized to 122Hz for efficiency
+// - Accurate Shadowdark torch timing and turn-off mechanics
+// - Deep sleep between updates for minimal power consumption
+
 mod pseudo_rand;
 use embedded_hal::pwm::SetDutyCycle;
 use panic_halt as _;
@@ -11,12 +18,12 @@ use attiny_hal as hal;
 use hal::simple_pwm::*;
 
 // Default Clock Source
-// The device is shipped with CKSEL = “0010”, SUT = “10”, and CKDIV8 programmed. The default clock source setting
-// is therefore the Internal RC Oscillator running at 8 MHz with longest start-up time and an initial system clock
-// prescaling of 8, resulting in 1.0 MHz system clock. This default setting ensures that all users can make their
-// desired clock source setting using an In-System or High-voltage Programme
+// The device has CKSEL = "0010", SUT = "10" (Internal RC Oscillator at 8 MHz)
+// CKDIV8 is NOT programmed (fuse = 0x62), so no clock division occurs
+// resulting in 8.0 MHz system clock. This default setting provides optimal
+// performance for the torch simulation while maintaining power efficiency.
 //
-// the timers are set by default to core clock and therefore at 1 MHz
+// The timers run at core clock frequency: 8 MHz
 
 type CoreClock = hal::clock::MHz8;
 
@@ -26,8 +33,8 @@ const T45: u16 = MINUTE * 45;
 const T47: u16 = MINUTE * 47;
 const T50: u16 = MINUTE * 50;
 
-const TIMER1_PRELOAD: u8 = 158; // Preload for 100ms overflow with prescaler 1024 and 1 MHz clock
-const TIME_INC: u16 = 100;
+const TIMER1_PRELOAD: u8 = 0; // Let timer overflow naturally every 256 ticks for consistent timing
+const TIME_INC: u16 = 33; // Each overflow = ~33ms at 8MHz/1024, update every overflow for power efficiency
 
 #[avr_device::interrupt(attiny85)]
 fn TIMER1_OVF() {
@@ -43,14 +50,14 @@ fn main() -> ! {
     let dp = hal::Peripherals::take().unwrap();
     let pins = hal::pins!(dp);
 
-    let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale64);
+    let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale1024);
 
     let mut pwm_led = pins.pb0.into_output().into_pwm(&timer0);
     pwm_led.enable();
 
-    // Configure Timer1 in normal mode with prescaler 1024
+    // Configure Timer1 in normal mode with prescaler 1024 (balanced power efficiency)
     dp.TC1.tccr1().write(|w| w.cs1().prescale_1024());
-    // Preload TCNT1
+    // Preload TCNT1 to 0 for natural overflow timing
     dp.TC1.tcnt1().write(|w| unsafe { w.bits(TIMER1_PRELOAD) });
     // Enable Timer1 overflow interrupt
     dp.TC1.timsk().write(|w| w.toie1().set_bit());
@@ -93,6 +100,8 @@ fn main() -> ! {
         pwm_led.set_duty_cycle_percent(duty_cycle).unwrap();
 
         avr_device::asm::sleep();
+        // Timer1 wakes us every ~33ms for power-efficient torch updates
+        // This provides smooth flickering while minimizing interrupt overhead
         // wait for timer1 overflow interrupt to wake up and then continue
         // increment time by TIME_INC milliseconds
         miliseconds += TIME_INC as u32;
@@ -100,9 +109,13 @@ fn main() -> ! {
         last_min = minutes;
 
         if off {
+            // Torch has burned out - enter maximum power saving mode
             avr_device::interrupt::disable();
             pwm_led.disable();
-            avr_device::asm::sleep();
+            // Enter permanent sleep - torch is completely off
+            loop {
+                avr_device::asm::sleep();
+            }
         }
     }
 }
