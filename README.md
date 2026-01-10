@@ -1,5 +1,8 @@
 # Shadowdark torch rs
 
+[![Latest Release](https://img.shields.io/github/v/release/ecruzolivera/shadowdark-torch-rs)](https://github.com/ecruzolivera/shadowdark-torch-rs/releases/latest)
+[![Download Firmware](https://img.shields.io/badge/download-firmware.hex-blue)](https://github.com/ecruzolivera/shadowdark-torch-rs/releases/latest/download/shadowdark-torch-rs.hex)
+
 Rust project for the _attiny85_.
 
 ## Hardware Requirements
