@@ -7,6 +7,12 @@ Rust project for the _attiny85_.
 - **Microcontroller:** ATtiny85 (8KB flash, 512B RAM)
 - **Programmer:** USBtiny or USBasp ISP programmer
 
+## Documentation
+
+- https://learn.sparkfun.com/tutorials/tiny-avr-programmer-hookup-guide/all
+- https://www.sparkfun.com/tiny-avr-programmer.html
+- https://www.thearcanelibrary.com/products/shadowdark-rpg-quickstart-set-pdf
+
 ## Build Instructions
 
 1. Install prerequisites Arch Linux: `sudo pacman -S avr-binutils avr-libc avrdude avr-gdb avr-gcc just`
