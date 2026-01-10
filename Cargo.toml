@@ -10,6 +10,24 @@ name = "shadowdark-torch-rs"
 test = false
 bench = false
 
+[[bin]]
+name = "test-blink-5secs"
+path = "src/test_blink_5secs.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "pwm-test"
+path = "src/pwm_test.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "overflow-test"
+path = "src/overflow_test.rs"
+test = false
+bench = false
+
 [dependencies]
 panic-halt = "1.0.0"
 ufmt = "0.2.0"

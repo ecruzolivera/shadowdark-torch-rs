@@ -3,10 +3,10 @@
 #![feature(abi_avr_interrupt)]
 #![feature(asm_experimental_arch)]
 
-// Shadowdark RPG Torch Simulation for ATtiny85 @ 8MHz
-// Power-optimized firmware for maximum battery life:
-// - Timer interrupts every ~33ms (30Hz updates)
-// - PWM frequency optimized to 122Hz for efficiency
+// Shadowdark RPG Torch Simulation for ATtiny85 @ 1MHz
+// Power-optimized firmware with VALIDATED timing:
+// - Direct timer overflow counting (verified accurate with test firmware)
+// - Timer interrupts every ~262ms, 19 overflows = 5 seconds
 // - Accurate Shadowdark torch timing and turn-off mechanics
 // - Deep sleep between updates for minimal power consumption
 
@@ -17,24 +17,28 @@ use panic_halt as _;
 use attiny_hal as hal;
 use hal::simple_pwm::*;
 
-// Default Clock Source
+// Default Clock Source - CORRECTED AFTER TIMER TESTING
 // The device has CKSEL = "0010", SUT = "10" (Internal RC Oscillator at 8 MHz)
-// CKDIV8 is NOT programmed (fuse = 0x62), so no clock division occurs
-// resulting in 8.0 MHz system clock. This default setting provides optimal
-// performance for the torch simulation while maintaining power efficiency.
+// However, CKDIV8 appears to be enabled despite fuse reading 0x62,
+// resulting in actual 1.0 MHz system clock (verified by timer test).
 //
-// The timers run at core clock frequency: 8 MHz
+// The timers run at core clock frequency: 1 MHz
 
-type CoreClock = hal::clock::MHz8;
+type CoreClock = hal::clock::MHz1;
 
-const MINUTE: u16 = 60;
-const T30: u16 = MINUTE * 30;
-const T45: u16 = MINUTE * 45;
-const T47: u16 = MINUTE * 47;
-const T50: u16 = MINUTE * 50;
+// Shadowdark timing in timer overflows (verified by test firmware):
+// 19 overflows = 5 seconds, so we calculate all timing from this base
+const OVERFLOWS_PER_MINUTE: u32 = 19 * 12; // 19 overflows = 5 sec, * 12 = 60 sec
+const T30_OVERFLOWS: u32 = OVERFLOWS_PER_MINUTE * 30; // 30 minutes = 6,840 overflows
+const T45_OVERFLOWS: u32 = OVERFLOWS_PER_MINUTE * 45; // 45 minutes = 10,260 overflows
+const T47_OVERFLOWS: u32 = OVERFLOWS_PER_MINUTE * 47; // 47 minutes = 10,716 overflows
+const T50_OVERFLOWS: u32 = OVERFLOWS_PER_MINUTE * 50; // 50 minutes = 11,400 overflows
 
-const TIMER1_PRELOAD: u8 = 0; // Let timer overflow naturally every 256 ticks for consistent timing
-const TIME_INC: u16 = 33; // Each overflow = ~33ms at 8MHz/1024, update every overflow for power efficiency
+const TIMER1_PRELOAD: u8 = 0;
+
+// Global overflow counter - replaces the old millisecond calculation
+static mut OVERFLOW_COUNTER: u32 = 0;
+static mut LAST_MINUTE_CHECK: u32 = 0;
 
 #[avr_device::interrupt(attiny85)]
 fn TIMER1_OVF() {
@@ -42,6 +46,9 @@ fn TIMER1_OVF() {
         (*avr_device::attiny85::TC1::ptr())
             .tcnt1()
             .write(|w| w.bits(TIMER1_PRELOAD));
+
+        // Direct overflow counting - no more TIME_INC calculations!
+        OVERFLOW_COUNTER += 1;
     }
 }
 
@@ -72,14 +79,13 @@ fn main() -> ! {
     }
 
     let mut rng = pseudo_rand::XorShift8::new(seed as i8);
-    let mut miliseconds: u32 = 0;
     let mut chance_for_turning_off = 0; //%
-    let mut last_min = 0;
-    loop {
-        let seconds = (miliseconds / 1000) as u16;
-        let minutes = seconds / 60;
 
-        let is_over_t = seconds >= T47;
+    loop {
+        let current_overflows = unsafe { OVERFLOW_COUNTER };
+        let current_minutes = current_overflows / OVERFLOWS_PER_MINUTE;
+
+        let is_over_t47 = current_overflows >= T47_OVERFLOWS;
         let delta = rng.random_between(-40, 40);
 
         // decide if we turn off the torch
@@ -87,26 +93,23 @@ fn main() -> ! {
         // the chance of turning off increases each minute
         // by 1% (so after 53 minutes it is 7%)
         // once it is off, it stays off
-        let off = if is_over_t && minutes != last_min {
-            let maybe_off = rng.random_between(1, 100);
-            chance_for_turning_off += 1;
-            maybe_off < chance_for_turning_off
-        } else {
-            false
+        let off = unsafe {
+            if is_over_t47 && current_minutes != LAST_MINUTE_CHECK {
+                let maybe_off = rng.random_between(1, 100);
+                chance_for_turning_off += 1;
+                LAST_MINUTE_CHECK = current_minutes;
+                maybe_off < chance_for_turning_off
+            } else {
+                false
+            }
         };
 
-        let duty_cycle = flick_torch(seconds, delta);
+        let duty_cycle = flick_torch_by_overflows(current_overflows, delta);
 
         pwm_led.set_duty_cycle_percent(duty_cycle).unwrap();
 
         avr_device::asm::sleep();
-        // Timer1 wakes us every ~33ms for power-efficient torch updates
-        // This provides smooth flickering while minimizing interrupt overhead
-        // wait for timer1 overflow interrupt to wake up and then continue
-        // increment time by TIME_INC milliseconds
-        miliseconds += TIME_INC as u32;
-
-        last_min = minutes;
+        // Timer1 wakes us every ~262ms, direct overflow counting provides accurate timing
 
         if off {
             // Torch has burned out - enter maximum power saving mode
@@ -120,16 +123,13 @@ fn main() -> ! {
     }
 }
 
-fn flick_torch(seconds: u16, delta: i8) -> u8 {
-    const T31: u16 = T30 + 1;
-    const T46: u16 = T45 + 1;
-
-    // set the baseline
-    let duty_cycle: u8 = match seconds {
-        0..=T30 => 95,
-        T31..=T45 => 70,
-        T46..=T50 => 40,
-        _ => 20,
+fn flick_torch_by_overflows(overflows: u32, delta: i8) -> u8 {
+    // set the baseline brightness based on elapsed time (in overflows)
+    let duty_cycle: u8 = match overflows {
+        0..T30_OVERFLOWS => 95,             // 0-30 minutes: 95% bright
+        T30_OVERFLOWS..T45_OVERFLOWS => 70, // 30-45 minutes: 70% bright
+        T45_OVERFLOWS..T50_OVERFLOWS => 40, // 45-50 minutes: 40% bright
+        _ => 20,                            // 50+ minutes: 20% bright
     };
 
     // adding the flickering effect
@@ -137,7 +137,7 @@ fn flick_torch(seconds: u16, delta: i8) -> u8 {
 
     if duty_cycle > 99 {
         99
-    } else if duty_cycle > 20 && seconds > T50 {
+    } else if duty_cycle > 20 && overflows > T50_OVERFLOWS {
         20
     } else if duty_cycle < 5 {
         // never allow being off due flickering
