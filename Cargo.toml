@@ -17,14 +17,8 @@ test = false
 bench = false
 
 [[bin]]
-name = "pwm-test"
-path = "src/pwm_test.rs"
-test = false
-bench = false
-
-[[bin]]
-name = "overflow-test"
-path = "src/overflow_test.rs"
+name = "test-pwm-sweep"
+path = "src/test_pwm_sweep.rs"
 test = false
 bench = false
 

@@ -2,17 +2,21 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-// PWM Test Firmware for ATtiny85 @ 1MHz
-// Purpose: Test PWM functionality and timing accuracy
-// Changes LED brightness every 10 seconds: 100% -> 50% -> 0% -> repeat
+// PWM Sweep Test Firmware for ATtiny85 @ 1MHz
+// Purpose: Test PWM functionality by sweeping from 0% to 100% brightness
+// Uses SAME timer configuration as main.rs for consistency
 
 use attiny_hal as hal;
 use embedded_hal::pwm::SetDutyCycle;
 use hal::simple_pwm::*;
 use panic_halt as _;
 
+// Same timer configuration as main.rs
 const TIMER1_PRELOAD: u8 = 0;
-const TIME_INC: u16 = 262; // Each Timer1 overflow = 262ms at 1MHz/1024 (verified by 5-second timer test)
+const OVERFLOWS_PER_SWEEP_STEP: u16 = 19; // ~5 seconds per step (same as 5-second blink test)
+
+static mut OVERFLOW_COUNTER: u16 = 0;
+static mut SWEEP_STEP: u8 = 0; // 0-10 for 0% to 100% in 10% increments
 
 #[avr_device::interrupt(attiny85)]
 fn TIMER1_OVF() {
@@ -20,6 +24,13 @@ fn TIMER1_OVF() {
         (*avr_device::attiny85::TC1::ptr())
             .tcnt1()
             .write(|w| w.bits(TIMER1_PRELOAD));
+
+        OVERFLOW_COUNTER += 1;
+
+        if OVERFLOW_COUNTER >= OVERFLOWS_PER_SWEEP_STEP {
+            OVERFLOW_COUNTER = 0;
+            SWEEP_STEP = (SWEEP_STEP + 1) % 11; // 0-10 (0%, 10%, 20%, ..., 100%)
+        }
     }
 }
 
@@ -28,11 +39,12 @@ fn main() -> ! {
     let dp = hal::Peripherals::take().unwrap();
     let pins = hal::pins!(dp);
 
-    let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale1024);
+    // Same PWM configuration as main.rs
+    let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale64);
     let mut pwm_led = pins.pb0.into_output().into_pwm(&timer0);
     pwm_led.enable();
 
-    // Configure Timer1 in normal mode with prescaler 1024
+    // Same Timer1 configuration as main.rs
     dp.TC1.tccr1().write(|w| w.cs1().prescale_1024());
     dp.TC1.tcnt1().write(|w| unsafe { w.bits(TIMER1_PRELOAD) });
     dp.TC1.timsk().write(|w| w.toie1().set_bit());
@@ -42,21 +54,10 @@ fn main() -> ! {
         avr_device::interrupt::enable();
     }
 
-    let mut miliseconds: u32 = 0;
-
     loop {
-        let seconds = (miliseconds / 1000) as u16;
-
-        // Change brightness every 10 seconds in a cycle: 100% -> 50% -> 0% -> repeat
-        let duty_cycle = match (seconds / 10) % 3 {
-            0 => 100, // 0-9 seconds: full brightness
-            1 => 50,  // 10-19 seconds: half brightness
-            _ => 0,   // 20-29 seconds: off, then repeat
-        };
+        let duty_cycle = unsafe { SWEEP_STEP * 10 }; // 0%, 10%, 20%, ..., 100%
 
         pwm_led.set_duty_cycle_percent(duty_cycle).unwrap();
-
         avr_device::asm::sleep();
-        miliseconds += TIME_INC as u32;
     }
 }

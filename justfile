@@ -1,39 +1,34 @@
 # Variables
 binary_name := "shadowdark-torch-rs"
-test_binary_name := "test-blink-5secs"
+blink_test := "test-blink-5secs"
+pwm_sweep_test := "test-pwm-sweep"
 dist_dir := "dist"
-hex_file := dist_dir + "/" + binary_name + ".hex"
-test_hex_file := dist_dir + "/" + test_binary_name + ".hex"
+main_hex := dist_dir + "/" + binary_name + ".hex"
+blink_hex := dist_dir + "/" + blink_test + ".hex"
+sweep_hex := dist_dir + "/" + pwm_sweep_test + ".hex"
 
 # Default recipe
-default:  release
+default: release
 
 # Create dist directory if it doesn't exist
 create-dist:
     @mkdir -p {{dist_dir}}
 
-# Build release and generate hex in dist directory
-release:  create-dist
+# Build main torch firmware
+release: create-dist
     cargo build --release
-    cargo objcopy --release --bin {{binary_name}} -- -O ihex {{hex_file}}
-    @echo "✅ Generated {{hex_file}}"
+    cargo objcopy --release --bin {{binary_name}} -- -O ihex {{main_hex}}
+    @echo "✅ Generated {{main_hex}}"
 
-# Flash to ATtiny85
+# Flash main torch firmware
 flash: release
-    avrdude -p attiny85 -c usbtiny -U flash:w:{{hex_file}}:i
-
-# Flash with specific programmer (adjust as needed)
-flash-usbasp: release
-    avrdude -p attiny85 -c usbasp -U flash:w:{{hex_file}}:i
+    avrdude -p attiny85 -c usbtiny -U flash:w:{{main_hex}}:i
+    @echo "🔥 Flashed Shadowdark torch firmware"
 
 # Show memory usage
 size: release
     @echo "📊 Memory usage for {{binary_name}}:"
     cargo objdump --release --bin {{binary_name}} -- --section-headers
-
-# Show detailed disassembly
-disasm: release
-    cargo objdump --release --bin {{binary_name}} -- --disassemble --no-show-raw-insn
 
 # Clean everything
 clean: 
@@ -45,73 +40,35 @@ clean:
 list: 
     @just --list
 
-# Build and show size in one command
-build-info:  release size
-
-# Development build (no hex generation)
+# Development commands
 dev:
     cargo build
 
-# Check code without building
 check:
     cargo check
 
-# Format code
 fmt:
     cargo fmt
 
-# Run clippy lints
 lint:
     cargo clippy
 
-# Full development workflow
-dev-flow:  fmt lint check dev
+# 5-Second Blink Test Commands
+blink-build: create-dist
+    cargo build --release --bin {{blink_test}}
+    cargo objcopy --release --bin {{blink_test}} -- -O ihex {{blink_hex}}
+    @echo "✅ Generated {{blink_hex}}"
 
-# Release workflow with size info
-release-flow: fmt lint release size
+blink-flash: blink-build
+    avrdude -p attiny85 -c usbtiny -U flash:w:{{blink_hex}}:i
+    @echo "🔥 Flashed 5-second blink test - LED should blink every 5 seconds"
 
-# Timer Test Firmware Commands
-test-build: create-dist
-    cargo build --release --bin {{test_binary_name}}
-    cargo objcopy --release --bin {{test_binary_name}} -- -O ihex {{test_hex_file}}
-    @echo "✅ Generated {{test_hex_file}}"
+# PWM Sweep Test Commands
+sweep-build: create-dist
+    cargo build --release --bin {{pwm_sweep_test}}
+    cargo objcopy --release --bin {{pwm_sweep_test}} -- -O ihex {{sweep_hex}}
+    @echo "✅ Generated {{sweep_hex}}"
 
-# Flash timer test firmware
-test-flash: test-build
-    avrdude -p attiny85 -c usbtiny -U flash:w:{{test_hex_file}}:i
-    @echo "🔥 Flashed 5-second blink test firmware - LED should blink every 5 seconds"
-
-# Flash timer test with USBasp
-test-flash-usbasp: test-build
-    avrdude -p attiny85 -c usbasp -U flash:w:{{test_hex_file}}:i
-    @echo "🔥 Flashed 5-second blink test firmware - LED should blink every 5 seconds"
-
-# Timer Test with Prescaler 8192
-test-build-8192: create-dist
-    cargo build --release --bin timer-test-8192
-    cargo objcopy --release --bin timer-test-8192 -- -O ihex {{dist_dir}}/timer-test-8192.hex
-    @echo "✅ Generated timer-test-8192.hex (prescaler 8192)"
-
-test-flash-8192: test-build-8192
-    avrdude -p attiny85 -c usbtiny -U flash:w:{{dist_dir}}/timer-test-8192.hex:i
-    @echo "🔥 Flashed timer test (8192) - LED should blink every 5 seconds"
-
-# PWM Test Firmware (tests PWM functionality and timing)
-pwm-test-build: create-dist
-    cargo build --release --bin pwm-test
-    cargo objcopy --release --bin pwm-test -- -O ihex {{dist_dir}}/pwm-test.hex
-    @echo "✅ Generated pwm-test.hex"
-
-pwm-test-flash: pwm-test-build
-    avrdude -p attiny85 -c usbtiny -U flash:w:{{dist_dir}}/pwm-test.hex:i
-    @echo "🔥 Flashed PWM test firmware - LED should cycle: 100% (10s) -> 50% (10s) -> 0% (10s) -> repeat"
-
-# Overflow Counter Test (direct overflow counting, no TIME_INC calculation)
-overflow-test-build: create-dist
-    cargo build --release --bin overflow-test
-    cargo objcopy --release --bin overflow-test -- -O ihex {{dist_dir}}/overflow-test.hex
-    @echo "✅ Generated overflow-test.hex"
-
-overflow-test-flash: overflow-test-build
-    avrdude -p attiny85 -c usbtiny -U flash:w:{{dist_dir}}/overflow-test.hex:i
-    @echo "🔥 Flashed overflow test - LED should cycle every ~10s: 100% -> 50% -> 0% -> repeat (direct overflow counting)"
+sweep-flash: sweep-build
+    avrdude -p attiny85 -c usbtiny -U flash:w:{{sweep_hex}}:i
+    @echo "🔥 Flashed PWM sweep test - LED sweeps 0%-100% every 5 seconds per step"

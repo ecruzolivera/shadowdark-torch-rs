@@ -57,7 +57,7 @@ fn main() -> ! {
     let dp = hal::Peripherals::take().unwrap();
     let pins = hal::pins!(dp);
 
-    let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale1024);
+    let timer0 = Timer0Pwm::new(dp.TC0, Prescaler::Prescale64); // ~61Hz PWM for smooth flickering
 
     let mut pwm_led = pins.pb0.into_output().into_pwm(&timer0);
     pwm_led.enable();
